@@ -1,0 +1,57 @@
+name: Build unsigned iOS IPA
+
+# Build chạy trên macOS runner của GitHub (không cần Mac thật) — output là .ipa CHƯA KÝ.
+# Ký + cài thật làm ở máy Windows bằng Sideloadly (dùng Apple ID cá nhân), KHÔNG ký trong CI
+# để khỏi phải nhét Apple ID/2FA vào secrets.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    # macos-14 chỉ có Xcode 15.4 sẵn — xcodegen bản mới ghi project file format 77 (Xcode 16+),
+    # Xcode 15.4 không mở được ("future Xcode project file format"). macos-15 có Xcode 16 mặc định.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Stamp build version into Info.plist
+        run: |
+          SHORT_SHA=$(git rev-parse --short=8 HEAD)
+          BUILD_TIME=$(date -u +%Y%m%d%H%M%S)
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${SHORT_SHA}" Sources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_TIME}" Sources/Info.plist
+
+      - name: Build unsigned .app
+        run: |
+          xcodebuild \
+            -project AiCouncilIOS.xcodeproj \
+            -scheme AiCouncilIOS \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build
+
+      - name: Package unsigned .ipa
+        run: |
+          set -e
+          APP_PATH="build/Build/Products/Release-iphoneos/AiCouncilIOS.app"
+          mkdir -p Payload
+          cp -r "$APP_PATH" Payload/
+          zip -r AiCouncilIOS-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AiCouncilIOS-unsigned-ipa
+          path: AiCouncilIOS-unsigned.ipa
