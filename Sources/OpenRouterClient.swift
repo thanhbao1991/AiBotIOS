@@ -17,14 +17,36 @@ enum OpenRouterError: LocalizedError {
     }
 }
 
-struct ChatMessage: Codable {
-    let role: String
-    let content: String
+/// 1 file/ảnh đính kèm gửi kèm câu hỏi tới AI, mã hoá base64 để nhét vào content đa phương thức.
+struct Attachment: Identifiable, Equatable {
+    let id = UUID()
+    let filename: String
+    let mimeType: String
+    let base64: String
+
+    var isImage: Bool { mimeType.hasPrefix("image/") }
 }
 
-struct OpenRouterModel: Identifiable, Decodable, Hashable {
-    var id: String
-    let name: String
+struct ChatMessage {
+    let role: String
+    let text: String
+    var attachments: [Attachment] = []
+
+    /// Nội dung gửi lên OpenRouter: chuỗi thuần nếu không có đính kèm, hoặc mảng part (text +
+    /// image_url/file) theo chuẩn multimodal của OpenRouter khi có đính kèm.
+    var contentJSON: Any {
+        guard !attachments.isEmpty else { return text }
+        var parts: [[String: Any]] = [["type": "text", "text": text]]
+        for a in attachments {
+            let dataUri = "data:\(a.mimeType);base64,\(a.base64)"
+            if a.isImage {
+                parts.append(["type": "image_url", "image_url": ["url": dataUri]])
+            } else {
+                parts.append(["type": "file", "file": ["filename": a.filename, "file_data": dataUri]])
+            }
+        }
+        return parts
+    }
 }
 
 /// Gọi OpenRouter (https://openrouter.ai) — 1 API key dùng chung cho GPT/Claude/Gemini/... qua
@@ -43,7 +65,7 @@ enum OpenRouterClient {
 
         let body: [String: Any] = [
             "model": model,
-            "messages": messages.map { ["role": $0.role, "content": $0.content] },
+            "messages": messages.map { ["role": $0.role, "content": $0.contentJSON] },
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -69,33 +91,5 @@ enum OpenRouterClient {
             throw OpenRouterError.emptyResponse
         }
         return content
-    }
-
-    /// Lấy toàn bộ danh sách model OpenRouter đang hỗ trợ (kể cả model free), để user chọn tuỳ ý.
-    static func fetchModels() async throws -> [OpenRouterModel] {
-        let apiKey = Prefs.apiKey.trimmingCharacters(in: .whitespaces)
-        guard !apiKey.isEmpty else { throw OpenRouterError.missingApiKey }
-
-        var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/models")!)
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw OpenRouterError.emptyResponse
-        }
-        guard (200...299).contains(http.statusCode) else {
-            let text = String(data: data, encoding: .utf8) ?? ""
-            throw OpenRouterError.httpError(http.statusCode, text)
-        }
-
-        struct ModelsResponse: Decodable { let data: [OpenRouterModel] }
-        let decoded = try JSONDecoder().decode(ModelsResponse.self, from: data)
-        // Model trả phí lên đầu (thường chất lượng cao/ổn định hơn), model free xuống cuối.
-        return decoded.data.sorted { a, b in
-            let aFree = a.id.hasSuffix(":free")
-            let bFree = b.id.hasSuffix(":free")
-            if aFree != bFree { return !aFree }
-            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
-        }
     }
 }
