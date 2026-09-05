@@ -4,6 +4,17 @@ import UniformTypeIdentifiers
 import UIKit
 
 struct ContentView: View {
+    var body: some View {
+        TabView {
+            AskCouncilView()
+                .tabItem { Label("Hỏi", systemImage: "bubble.left.and.bubble.right") }
+            ManualSynthesisView()
+                .tabItem { Label("Tổng hợp", systemImage: "checkmark.seal") }
+        }
+    }
+}
+
+struct AskCouncilView: View {
     @StateObject private var engine = DebateEngine()
     @State private var question = ""
     @State private var showSettings = false

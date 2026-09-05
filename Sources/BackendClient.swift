@@ -84,6 +84,15 @@ enum BackendClient {
         return try JSONDecoder().decode(Resp.self, from: data).jobId
     }
 
+    /// Bỏ qua bước hỏi 3 AI — gửi thẳng câu trả lời user tự dán để Claude Opus tổng hợp.
+    static func synthesizeOnly(question: String, answers: [(label: String, answer: String)]) async throws -> String {
+        let answersJSON = answers.map { ["label": $0.label, "answer": $0.answer] }
+        let req = try request("/api/synthesize", method: "POST", body: ["question": question, "answers": answersJSON])
+        let data = try await send(req)
+        struct Resp: Decodable { let jobId: String }
+        return try JSONDecoder().decode(Resp.self, from: data).jobId
+    }
+
     static func fetchJob(id: String) async throws -> JobDetail {
         let req = try request("/api/jobs/\(id)")
         let data = try await send(req)

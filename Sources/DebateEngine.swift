@@ -44,6 +44,31 @@ final class DebateEngine: ObservableObject {
         }
     }
 
+    /// Bỏ qua bước hỏi 3 AI — user tự dán câu trả lời (đã hỏi tay ở chỗ khác), chỉ gửi lên
+    /// backend để Claude Opus tổng hợp.
+    func runSynthesisOnly(question: String, answers: [(label: String, answer: String)]) {
+        let question = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty, !answers.isEmpty else { return }
+
+        pollTask?.cancel()
+        isRunning = true
+        errorMessage = nil
+        finalAnswer = nil
+        self.answers = answers.map { ModelAnswer(label: $0.label, answer: $0.answer) }
+        stageText = "Đang gửi để Claude Opus tổng hợp..."
+
+        pollTask = Task {
+            do {
+                let jobId = try await BackendClient.synthesizeOnly(question: question, answers: answers)
+                Prefs.currentJobId = jobId
+                await poll(jobId: jobId)
+            } catch {
+                errorMessage = error.localizedDescription
+                isRunning = false
+            }
+        }
+    }
+
     /// Gọi lúc app khởi động/mở lại — nếu có job đang dở (chưa done) từ lần trước, tiếp tục
     /// theo dõi thay vì bỏ quên.
     func resumeIfNeeded() {
