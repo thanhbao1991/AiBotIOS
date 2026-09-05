@@ -7,7 +7,8 @@ struct ContentView: View {
     @StateObject private var engine = DebateEngine()
     @State private var question = ""
     @State private var showSettings = false
-    @State private var runTask: Task<Void, Never>?
+    @State private var showHistory = false
+    @FocusState private var questionFocused: Bool
 
     @State private var attachments: [Attachment] = []
     @State private var photoPickerItems: [PhotosPickerItem] = []
@@ -22,6 +23,7 @@ struct ContentView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     TextEditor(text: $question)
+                        .focused($questionFocused)
                         .frame(minHeight: 90)
                         .padding(8)
                         .background(Color(.secondarySystemBackground))
@@ -118,8 +120,12 @@ struct ContentView: View {
                 }
                 .padding()
             }
-            .navigationTitle("AI Council")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: { showHistory = true }) {
+                        Image(systemName: "clock.arrow.circlepath")
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { showSettings = true }) {
                         Image(systemName: "gearshape")
@@ -129,6 +135,9 @@ struct ContentView: View {
             .sheet(isPresented: $showSettings) {
                 SettingsView()
             }
+            .sheet(isPresented: $showHistory) {
+                HistoryView()
+            }
             .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
                 addFiles(result)
             }
@@ -136,16 +145,15 @@ struct ContentView: View {
                 finalFileURL = newValue.flatMap(writeFinalAnswerFile)
                 copiedFeedback = false
             }
+            .task {
+                engine.resumeIfNeeded()
+            }
         }
     }
 
     private func ask() {
-        let q = question
-        let atts = attachments
-        runTask?.cancel()
-        runTask = Task {
-            await engine.run(question: q, attachments: atts)
-        }
+        questionFocused = false
+        engine.run(question: question, attachments: attachments)
     }
 
     private func copyFinal() {

@@ -1,33 +1,34 @@
 import Foundation
 
-/// 1 AI cố định trong hội đồng: nhãn hiển thị + slug model OpenRouter thật sẽ gọi.
-struct CouncilModel {
-    let label: String
-    let slug: String
-}
-
-/// Lưu API key OpenRouter trong UserDefaults. Đây là app cá nhân cài qua Sideloadly (không phát
-/// hành App Store), nên UserDefaults là đủ — không cần Keychain.
+/// Lưu cấu hình app trong UserDefaults. App cá nhân cài qua Sideloadly (không phát hành App
+/// Store), nên UserDefaults là đủ — không cần Keychain.
 enum Prefs {
     private static let defaults = UserDefaults.standard
 
     private enum Key {
-        static let apiKey = "openRouterApiKey"
+        static let backendApiKey = "backendApiKey"
+        static let currentJobId = "currentJobId"
     }
 
-    static var apiKey: String {
-        get { defaults.string(forKey: Key.apiKey) ?? "" }
-        set { defaults.set(newValue, forKey: Key.apiKey) }
+    /// Backend trung gian (VPS) thật sự gọi OpenRouter — app chỉ là giao diện gửi câu hỏi + xem
+    /// kết quả, nên mất kết nối/chuyển app giữa chừng không làm mất câu trả lời đang xử lý.
+    static let backendBaseURL = "https://tsbot.denncoffee.uk"
+
+    /// Khoá xác thực với backend (header X-Api-Key) — khác với API key OpenRouter, khoá đó giờ
+    /// chỉ nằm trên VPS, app không cần biết.
+    static var backendApiKey: String {
+        get { defaults.string(forKey: Key.backendApiKey) ?? "" }
+        set { defaults.set(newValue, forKey: Key.backendApiKey) }
     }
 
-    /// 3 AI cố định trả lời độc lập. Dùng slug dạng "~vendor/model-latest" (rolling alias của
-    /// OpenRouter) để tự động trỏ tới bản mới nhất của mỗi hãng, khỏi phải sửa code khi có model mới.
-    static let councilModels = [
-        CouncilModel(label: "Claude", slug: "~anthropic/claude-sonnet-latest"),
-        CouncilModel(label: "Gemini", slug: "~google/gemini-pro-latest"),
-        CouncilModel(label: "ChatGPT", slug: "openai/gpt-chat-latest"),
-    ]
+    /// Job đang xử lý dở (nếu có) — lưu lại để app relaunch/chuyển app xong quay lại vẫn theo
+    /// dõi tiếp đúng job đó thay vì phải hỏi lại từ đầu.
+    static var currentJobId: String? {
+        get { defaults.string(forKey: Key.currentJobId) }
+        set { defaults.set(newValue, forKey: Key.currentJobId) }
+    }
 
-    /// Model "trọng tài" tổng hợp câu trả lời cuối — cố định Claude Opus (tier cao nhất).
-    static let synthesizerModel = "~anthropic/claude-opus-latest"
+    /// Chỉ để hiển thị thông tin trong Cài đặt — model thật cố định trên backend.
+    static let councilLabels = ["Claude", "Gemini", "ChatGPT"]
+    static let synthesizerLabel = "Claude Opus"
 }

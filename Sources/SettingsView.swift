@@ -2,37 +2,33 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var apiKey = Prefs.apiKey
+    @State private var backendApiKey = Prefs.backendApiKey
 
     var body: some View {
         NavigationView {
             Form {
                 Section {
-                    SecureField("OpenRouter API key", text: $apiKey)
+                    SecureField("Khoá truy cập backend", text: $backendApiKey)
                 } header: {
-                    Text("API key")
+                    Text("Khoá truy cập")
                 } footer: {
-                    Text("Lấy tại openrouter.ai/keys. 1 key dùng chung được cho GPT/Claude/Gemini/... Chỉ lưu trên máy này (UserDefaults).")
+                    Text("Backend trung gian tại \(Prefs.backendBaseURL) thật sự gọi OpenRouter — chỉ cần khoá này để xác thực với backend, không cần API key OpenRouter nữa.")
                 }
 
                 Section {
-                    ForEach(Prefs.councilModels, id: \.slug) { model in
-                        HStack {
-                            Text(model.label)
-                            Spacer()
-                            Text(model.slug).font(.caption).foregroundColor(.secondary)
-                        }
+                    ForEach(Prefs.councilLabels, id: \.self) { label in
+                        Text(label)
                     }
                 } header: {
                     Text("3 AI trả lời độc lập")
                 }
 
                 Section {
-                    Text(Prefs.synthesizerModel).font(.caption).foregroundColor(.secondary)
+                    Text(Prefs.synthesizerLabel)
                 } header: {
                     Text("AI trọng tài tổng hợp")
                 } footer: {
-                    Text("Bộ 3 AI trả lời + AI trọng tài là cố định, không chỉnh được trong app.")
+                    Text("Bộ 3 AI trả lời + AI trọng tài là cố định trên backend, không chỉnh được trong app.")
                 }
             }
             .navigationTitle("Cài đặt")
@@ -48,7 +44,7 @@ struct SettingsView: View {
     }
 
     private func save() {
-        Prefs.apiKey = apiKey
+        Prefs.backendApiKey = backendApiKey
         dismiss()
     }
 }

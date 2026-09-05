@@ -7,9 +7,10 @@ struct ModelAnswer: Identifiable {
     var error: String?
 }
 
-/// Điều phối luồng 1 vòng: 3 AI cố định (Prefs.councilModels) nhận câu hỏi (kèm ảnh/file nếu có)
-/// và trả lời độc lập, song song. Sau đó Claude Opus (Prefs.synthesizerModel) đọc cả 3 câu trả
-/// lời rồi tổng hợp/đánh giá thành 1 câu trả lời cuối.
+/// Gửi câu hỏi lên backend (VPS) rồi poll tiến độ — backend mới thật sự chạy 3 AI (Claude/
+/// Gemini/ChatGPT) song song + Claude Opus tổng hợp. Nhờ vậy nếu app bị chuyển nền/mất kết nối
+/// giữa chừng, job vẫn chạy tiếp trên server; app quay lại chỉ cần poll lại đúng job đó, không
+/// tốn token hỏi lại từ đầu.
 @MainActor
 final class DebateEngine: ObservableObject {
     @Published var answers: [ModelAnswer] = []
@@ -18,67 +19,63 @@ final class DebateEngine: ObservableObject {
     @Published var stageText: String = "Sẵn sàng"
     @Published var errorMessage: String?
 
-    func run(question: String, attachments: [Attachment]) async {
+    private var pollTask: Task<Void, Never>?
+
+    func run(question: String, attachments: [Attachment]) {
         let question = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty else { return }
 
+        pollTask?.cancel()
         isRunning = true
         errorMessage = nil
         finalAnswer = nil
-        let models = Prefs.councilModels
-        answers = models.map { ModelAnswer(label: $0.label) }
+        answers = Prefs.councilLabels.map { ModelAnswer(label: $0) }
+        stageText = "Đang gửi câu hỏi..."
 
-        stageText = "Đang hỏi \(models.map(\.label).joined(separator: ", "))..."
-        await withTaskGroup(of: (Int, Result<String, Error>).self) { group in
-            for (idx, model) in models.enumerated() {
-                group.addTask {
-                    do {
-                        let text = try await OpenRouterClient.complete(
-                            model: model.slug,
-                            messages: [ChatMessage(role: "user", text: question, attachments: attachments)]
-                        )
-                        return (idx, .success(text))
-                    } catch {
-                        return (idx, .failure(error))
-                    }
-                }
-            }
-            for await (idx, result) in group {
-                switch result {
-                case .success(let text): answers[idx].answer = text
-                case .failure(let err): answers[idx].error = err.localizedDescription
-                }
+        pollTask = Task {
+            do {
+                let jobId = try await BackendClient.ask(question: question, attachments: attachments)
+                Prefs.currentJobId = jobId
+                await poll(jobId: jobId)
+            } catch {
+                errorMessage = error.localizedDescription
+                isRunning = false
             }
         }
-
-        stageText = "Claude Opus đang tổng hợp câu trả lời cuối..."
-        let synthPrompt = Self.synthesisPrompt(question: question, answers: answers)
-        do {
-            finalAnswer = try await OpenRouterClient.complete(
-                model: Prefs.synthesizerModel,
-                messages: [ChatMessage(role: "user", text: synthPrompt)]
-            )
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-
-        stageText = "Xong"
-        isRunning = false
     }
 
-    private static func synthesisPrompt(question: String, answers: [ModelAnswer]) -> String {
-        var text = "Câu hỏi gốc: \(question)\n\n"
-        text += "Dưới đây là câu trả lời độc lập của từng AI cho câu hỏi trên:\n\n"
-        for a in answers {
-            guard let content = a.answer else { continue }
-            text += "--- \(a.label) ---\n\(content)\n\n"
+    /// Gọi lúc app khởi động/mở lại — nếu có job đang dở (chưa done) từ lần trước, tiếp tục
+    /// theo dõi thay vì bỏ quên.
+    func resumeIfNeeded() {
+        guard let jobId = Prefs.currentJobId else { return }
+        isRunning = true
+        stageText = "Đang tải lại tiến độ..."
+        pollTask?.cancel()
+        pollTask = Task { await poll(jobId: jobId) }
+    }
+
+    private func poll(jobId: String) async {
+        while !Task.isCancelled {
+            do {
+                let job = try await BackendClient.fetchJob(id: jobId)
+                answers = job.answers.map { ModelAnswer(label: $0.label, answer: $0.answer, error: $0.error) }
+                if job.status == "done" {
+                    finalAnswer = job.finalAnswer?.isEmpty == false ? job.finalAnswer : nil
+                    errorMessage = job.errorMessage
+                    stageText = "Xong"
+                    isRunning = false
+                    Prefs.currentJobId = nil
+                    return
+                } else {
+                    let doneCount = job.answers.filter { $0.answer != nil || $0.error != nil }.count
+                    stageText = doneCount < job.answers.count
+                        ? "Đang hỏi \(job.answers.map(\.label).joined(separator: ", "))... (\(doneCount)/\(job.answers.count))"
+                        : "Claude Opus đang tổng hợp câu trả lời cuối..."
+                }
+            } catch {
+                stageText = "Mất kết nối, đang thử lại..."
+            }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
         }
-        text += """
-        Vai trò của bạn là trọng tài đánh giá: đối chiếu các câu trả lời trên, chỉ ra điểm đúng/ \
-        sai/mâu thuẫn của từng câu, giữ lại phần đúng nhất, loại bỏ phần sai hoặc không có căn cứ, \
-        rồi viết MỘT câu trả lời cuối cùng, rõ ràng, chính xác nhất cho câu hỏi gốc. Nếu các AI \
-        còn bất đồng ở điểm nào, nêu rõ bất đồng đó và cho biết bạn nghiêng về phương án nào, vì sao.
-        """
-        return text
     }
 }
