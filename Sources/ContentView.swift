@@ -36,7 +36,7 @@ struct ContentView: View {
 
                         if engine.isRunning {
                             ProgressView()
-                            Text(engine.stage.rawValue)
+                            Text(engine.stageText)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -66,7 +66,7 @@ struct ContentView: View {
                     }
 
                     ForEach(engine.answers) { answer in
-                        AnswerCardView(answer: answer)
+                        AnswerCardView(answer: answer, roundCount: Prefs.rounds)
                     }
                 }
                 .padding()
@@ -89,28 +89,29 @@ struct ContentView: View {
         let q = question
         runTask?.cancel()
         runTask = Task {
-            await engine.run(question: q, models: Prefs.models, synthesizer: Prefs.synthesizerModel)
+            await engine.run(
+                question: q,
+                models: Prefs.models,
+                synthesizer: Prefs.synthesizerModel,
+                roundCount: Prefs.rounds
+            )
         }
     }
 }
 
 struct AnswerCardView: View {
     let answer: ModelAnswer
+    let roundCount: Int
     @State private var expanded = false
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: 10) {
-                if let round1 = answer.round1 {
+                ForEach(Array(answer.rounds.enumerated()), id: \.offset) { i, text in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Vòng 1 (trả lời độc lập)").font(.caption).bold().foregroundColor(.secondary)
-                        Text(round1).textSelection(.enabled)
-                    }
-                }
-                if let round2 = answer.round2 {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Vòng 2 (sau phản biện chéo)").font(.caption).bold().foregroundColor(.secondary)
-                        Text(round2).textSelection(.enabled)
+                        Text(i == 0 ? "Vòng 1 (trả lời độc lập)" : "Vòng \(i + 1) (sau phản biện chéo)")
+                            .font(.caption).bold().foregroundColor(.secondary)
+                        Text(text).textSelection(.enabled)
                     }
                 }
                 if let error = answer.error {
@@ -122,9 +123,9 @@ struct AnswerCardView: View {
             HStack {
                 Text(answer.model).font(.subheadline).bold()
                 Spacer()
-                if answer.round1 == nil && answer.error == nil {
+                if answer.rounds.isEmpty && answer.error == nil {
                     ProgressView().scaleEffect(0.7)
-                } else if answer.round1 != nil && answer.round2 == nil && answer.error == nil {
+                } else if answer.rounds.count < roundCount && answer.error == nil {
                     Text("đang phản biện...").font(.caption2).foregroundColor(.secondary)
                 }
             }

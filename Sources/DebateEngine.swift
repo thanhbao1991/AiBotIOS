@@ -3,90 +3,67 @@ import Foundation
 struct ModelAnswer: Identifiable {
     let id = UUID()
     let model: String
-    var round1: String?
-    var round2: String?
+    var rounds: [String] = []
     var error: String?
 }
 
-/// Điều phối luồng 2 vòng: (1) mỗi model trả lời độc lập, (2) mỗi model đọc câu trả lời của
-/// TẤT CẢ model (kể cả của chính nó) rồi phản biện/tinh chỉnh, sau đó 1 model "trọng tài" tổng
-/// hợp thành câu trả lời cuối.
+/// Điều phối luồng N vòng tranh luận (N do user chọn trong Cài đặt): vòng 1 mỗi model trả lời
+/// độc lập, các vòng sau mỗi model đọc câu trả lời mới nhất của TẤT CẢ model (kể cả của chính
+/// nó) rồi phản biện/tinh chỉnh, cuối cùng 1 model "trọng tài" tổng hợp thành câu trả lời cuối.
 @MainActor
 final class DebateEngine: ObservableObject {
-    enum Stage: String {
-        case idle = "Sẵn sàng"
-        case round1 = "Vòng 1: đang hỏi từng AI độc lập..."
-        case round2 = "Vòng 2: đang cho các AI phản biện chéo..."
-        case synthesis = "Đang tổng hợp câu trả lời cuối..."
-        case done = "Xong"
-    }
-
     @Published var answers: [ModelAnswer] = []
     @Published var finalAnswer: String?
     @Published var isRunning = false
-    @Published var stage: Stage = .idle
+    @Published var stageText: String = "Sẵn sàng"
     @Published var errorMessage: String?
 
-    func run(question: String, models: [String], synthesizer: String) async {
+    func run(question: String, models: [String], synthesizer: String, roundCount: Int) async {
         let question = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !models.isEmpty else { return }
+        let roundCount = max(1, roundCount)
 
         isRunning = true
         errorMessage = nil
         finalAnswer = nil
         answers = models.map { ModelAnswer(model: $0) }
 
-        stage = .round1
-        await withTaskGroup(of: (Int, Result<String, Error>).self) { group in
-            for (idx, model) in models.enumerated() {
-                group.addTask {
-                    do {
-                        let text = try await OpenRouterClient.complete(
-                            model: model,
-                            messages: [ChatMessage(role: "user", content: question)]
-                        )
-                        return (idx, .success(text))
-                    } catch {
-                        return (idx, .failure(error))
+        for round in 0..<roundCount {
+            stageText = round == 0
+                ? "Vòng 1/\(roundCount): đang hỏi từng AI độc lập..."
+                : "Vòng \(round + 1)/\(roundCount): đang cho các AI phản biện chéo..."
+
+            let snapshot = answers
+            await withTaskGroup(of: (Int, Result<String, Error>).self) { group in
+                for (idx, entry) in snapshot.enumerated() {
+                    // Chỉ model đã trả lời đủ các vòng trước mới tiếp tục vòng này.
+                    guard entry.rounds.count == round else { continue }
+                    let model = entry.model
+                    let prompt = round == 0
+                        ? question
+                        : Self.critiquePrompt(question: question, answers: snapshot, selfModel: model)
+                    group.addTask {
+                        do {
+                            let text = try await OpenRouterClient.complete(
+                                model: model,
+                                messages: [ChatMessage(role: "user", content: prompt)]
+                            )
+                            return (idx, .success(text))
+                        } catch {
+                            return (idx, .failure(error))
+                        }
                     }
                 }
-            }
-            for await (idx, result) in group {
-                switch result {
-                case .success(let text): answers[idx].round1 = text
-                case .failure(let err): answers[idx].error = err.localizedDescription
+                for await (idx, result) in group {
+                    switch result {
+                    case .success(let text): answers[idx].rounds.append(text)
+                    case .failure(let err): answers[idx].error = err.localizedDescription
+                    }
                 }
             }
         }
 
-        stage = .round2
-        let round1Snapshot = answers
-        await withTaskGroup(of: (Int, Result<String, Error>).self) { group in
-            for (idx, entry) in round1Snapshot.enumerated() {
-                guard entry.round1 != nil else { continue }
-                let model = entry.model
-                let prompt = Self.critiquePrompt(question: question, answers: round1Snapshot, selfModel: model)
-                group.addTask {
-                    do {
-                        let text = try await OpenRouterClient.complete(
-                            model: model,
-                            messages: [ChatMessage(role: "user", content: prompt)]
-                        )
-                        return (idx, .success(text))
-                    } catch {
-                        return (idx, .failure(error))
-                    }
-                }
-            }
-            for await (idx, result) in group {
-                switch result {
-                case .success(let text): answers[idx].round2 = text
-                case .failure(let err): answers[idx].error = err.localizedDescription
-                }
-            }
-        }
-
-        stage = .synthesis
+        stageText = "Đang tổng hợp câu trả lời cuối..."
         let synthPrompt = Self.synthesisPrompt(question: question, answers: answers)
         do {
             finalAnswer = try await OpenRouterClient.complete(
@@ -97,17 +74,17 @@ final class DebateEngine: ObservableObject {
             errorMessage = error.localizedDescription
         }
 
-        stage = .done
+        stageText = "Xong"
         isRunning = false
     }
 
     private static func critiquePrompt(question: String, answers: [ModelAnswer], selfModel: String) -> String {
         var text = "Câu hỏi gốc: \(question)\n\n"
-        text += "Dưới đây là các câu trả lời độc lập từ nhiều AI khác nhau cho câu hỏi trên (bao gồm cả câu trả lời của chính bạn):\n\n"
+        text += "Dưới đây là câu trả lời mới nhất từ nhiều AI khác nhau cho câu hỏi trên (bao gồm cả câu trả lời của chính bạn):\n\n"
         for a in answers {
-            guard let r1 = a.round1 else { continue }
+            guard let latest = a.rounds.last else { continue }
             let label = a.model == selfModel ? "\(a.model) (đây là câu trả lời của chính bạn)" : a.model
-            text += "--- \(label) ---\n\(r1)\n\n"
+            text += "--- \(label) ---\n\(latest)\n\n"
         }
         text += """
         Hãy đọc kỹ tất cả câu trả lời trên, chỉ ra điểm sai/thiếu sót/mâu thuẫn (kể cả trong câu \
@@ -119,10 +96,10 @@ final class DebateEngine: ObservableObject {
 
     private static func synthesisPrompt(question: String, answers: [ModelAnswer]) -> String {
         var text = "Câu hỏi gốc: \(question)\n\n"
-        text += "Nhiều AI đã trả lời độc lập rồi phản biện chéo nhau. Dưới đây là câu trả lời đã tinh chỉnh (sau phản biện) của từng AI:\n\n"
+        text += "Nhiều AI đã trả lời độc lập rồi phản biện chéo nhiều vòng. Dưới đây là câu trả lời mới nhất của từng AI:\n\n"
         for a in answers {
-            guard let content = a.round2 ?? a.round1 else { continue }
-            text += "--- \(a.model) ---\n\(content)\n\n"
+            guard let latest = a.rounds.last else { continue }
+            text += "--- \(a.model) ---\n\(latest)\n\n"
         }
         text += """
         Vai trò của bạn là trọng tài tổng hợp: đối chiếu các câu trả lời trên, giữ lại phần đúng/ \
