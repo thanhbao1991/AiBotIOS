@@ -90,6 +90,12 @@ enum OpenRouterClient {
 
         struct ModelsResponse: Decodable { let data: [OpenRouterModel] }
         let decoded = try JSONDecoder().decode(ModelsResponse.self, from: data)
-        return decoded.data.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        // Model trả phí lên đầu (thường chất lượng cao/ổn định hơn), model free xuống cuối.
+        return decoded.data.sorted { a, b in
+            let aFree = a.id.hasSuffix(":free")
+            let bFree = b.id.hasSuffix(":free")
+            if aFree != bFree { return !aFree }
+            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }
     }
 }
