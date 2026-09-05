@@ -22,6 +22,11 @@ struct ChatMessage: Codable {
     let content: String
 }
 
+struct OpenRouterModel: Identifiable, Decodable, Hashable {
+    var id: String
+    let name: String
+}
+
 /// Gọi OpenRouter (https://openrouter.ai) — 1 API key dùng chung cho GPT/Claude/Gemini/... qua
 /// endpoint tương thích chuẩn OpenAI chat completions.
 enum OpenRouterClient {
@@ -64,5 +69,27 @@ enum OpenRouterClient {
             throw OpenRouterError.emptyResponse
         }
         return content
+    }
+
+    /// Lấy toàn bộ danh sách model OpenRouter đang hỗ trợ (kể cả model free), để user chọn tuỳ ý.
+    static func fetchModels() async throws -> [OpenRouterModel] {
+        let apiKey = Prefs.apiKey.trimmingCharacters(in: .whitespaces)
+        guard !apiKey.isEmpty else { throw OpenRouterError.missingApiKey }
+
+        var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/models")!)
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw OpenRouterError.emptyResponse
+        }
+        guard (200...299).contains(http.statusCode) else {
+            let text = String(data: data, encoding: .utf8) ?? ""
+            throw OpenRouterError.httpError(http.statusCode, text)
+        }
+
+        struct ModelsResponse: Decodable { let data: [OpenRouterModel] }
+        let decoded = try JSONDecoder().decode(ModelsResponse.self, from: data)
+        return decoded.data.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 }

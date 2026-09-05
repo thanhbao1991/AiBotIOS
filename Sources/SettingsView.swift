@@ -3,8 +3,9 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var apiKey = Prefs.apiKey
-    @State private var modelsText = Prefs.models.joined(separator: "\n")
+    @State private var models = Prefs.models
     @State private var synthesizer = Prefs.synthesizerModel
+    @State private var showPicker = false
 
     var body: some View {
         NavigationView {
@@ -18,23 +19,30 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    TextEditor(text: $modelsText)
-                        .frame(minHeight: 100)
-                        .font(.system(.body, design: .monospaced))
+                    ForEach(models, id: \.self) { model in
+                        Text(model)
+                    }
+                    .onDelete { models.remove(atOffsets: $0) }
+
+                    Button(action: { showPicker = true }) {
+                        Label("Chọn model", systemImage: "plus.circle")
+                    }
                 } header: {
-                    Text("Danh sách model (mỗi dòng 1 model)")
+                    Text("Model tham gia (\(models.count)/\(Prefs.maxModels))")
                 } footer: {
-                    Text("Dùng đúng model slug của OpenRouter, vd openai/gpt-5, anthropic/claude-sonnet-4.5, google/gemini-2.5-pro. Xem danh sách đầy đủ tại openrouter.ai/models.")
+                    Text("Chọn tối thiểu \(Prefs.minModels), tối đa \(Prefs.maxModels) model bất kỳ trong danh sách OpenRouter (kể cả model free).")
                 }
 
-                Section {
-                    Picker("Model tổng hợp câu trả lời cuối", selection: $synthesizer) {
-                        ForEach(currentModels, id: \.self) { m in
-                            Text(m).tag(m)
+                if !models.isEmpty {
+                    Section {
+                        Picker("Model tổng hợp câu trả lời cuối", selection: $synthesizer) {
+                            ForEach(models, id: \.self) { m in
+                                Text(m).tag(m)
+                            }
                         }
+                    } footer: {
+                        Text("Model này sẽ đọc câu trả lời (đã phản biện) của tất cả model khác rồi chốt 1 câu trả lời cuối cùng.")
                     }
-                } footer: {
-                    Text("Model này sẽ đọc câu trả lời (đã phản biện) của tất cả model khác rồi chốt 1 câu trả lời cuối cùng.")
                 }
             }
             .navigationTitle("Cài đặt")
@@ -43,23 +51,24 @@ struct SettingsView: View {
                     Button("Đóng") { dismiss() }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Lưu") { save() }.bold()
+                    Button("Lưu") { save() }
+                        .bold()
+                        .disabled(models.count < Prefs.minModels)
+                }
+            }
+            .sheet(isPresented: $showPicker) {
+                ModelPickerView(selected: $models)
+            }
+            .onChange(of: models) { newModels in
+                if !newModels.isEmpty, !newModels.contains(synthesizer) {
+                    synthesizer = newModels[0]
                 }
             }
         }
     }
 
-    private var currentModels: [String] {
-        let list = modelsText
-            .split(separator: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        return list.isEmpty ? [synthesizer] : list
-    }
-
     private func save() {
         Prefs.apiKey = apiKey
-        let models = currentModels
         Prefs.models = models
         Prefs.synthesizerModel = models.contains(synthesizer) ? synthesizer : (models.first ?? synthesizer)
         dismiss()

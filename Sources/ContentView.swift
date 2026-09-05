@@ -32,7 +32,7 @@ struct ContentView: View {
                             Label("Hỏi hội đồng AI", systemImage: "bubble.left.and.bubble.right")
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(engine.isRunning || question.trimmingCharacters(in: .whitespaces).isEmpty || Prefs.models.isEmpty)
+                        .disabled(engine.isRunning || question.trimmingCharacters(in: .whitespaces).isEmpty || Prefs.models.count < Prefs.minModels)
 
                         if engine.isRunning {
                             ProgressView()
@@ -42,8 +42,8 @@ struct ContentView: View {
                         }
                     }
 
-                    if Prefs.models.isEmpty {
-                        Text("Chưa cấu hình model nào — vào Cài đặt để thêm.")
+                    if Prefs.models.count < Prefs.minModels {
+                        Text("Cần chọn tối thiểu \(Prefs.minModels) model trong Cài đặt.")
                             .font(.caption)
                             .foregroundColor(.orange)
                     }

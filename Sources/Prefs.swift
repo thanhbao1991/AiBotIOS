@@ -5,6 +5,9 @@ import Foundation
 enum Prefs {
     private static let defaults = UserDefaults.standard
 
+    static let minModels = 2
+    static let maxModels = 5
+
     private enum Key {
         static let apiKey = "openRouterApiKey"
         static let models = "selectedModels"
